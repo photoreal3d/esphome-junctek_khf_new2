@@ -2,18 +2,13 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import uart, sensor
 from esphome.const import (
-    CONF_RAW,
     CONF_ID,
     CONF_ADDRESS,
-    CONF_INPUT,
-    CONF_NUMBER,
-    CONF_HARDWARE_UART,
     CONF_TEMPERATURE,
     CONF_VOLTAGE,
     CONF_CURRENT,
     CONF_BATTERY_LEVEL,
     CONF_DIRECTION,
-
     DEVICE_CLASS_VOLTAGE,
     STATE_CLASS_MEASUREMENT,
     STATE_CLASS_TOTAL_INCREASING,
@@ -21,73 +16,60 @@ from esphome.const import (
     UNIT_CELSIUS,
     UNIT_AMPERE,
     UNIT_WATT,
-    UNIT_OHM,
-    CONF_UPDATE_INTERVAL,
-    UNIT_EMPTY,
     UNIT_PERCENT,
-    ICON_EMPTY,
     UNIT_KILOWATT_HOURS,
     UNIT_MINUTE,
-    ICON_EMPTY,
-    ICON_POWER,
-    ICON_BATTERY,
-    ICON_THERMOMETER,
     ICON_FLASH,
     ICON_PERCENT,
+    ICON_THERMOMETER,
+    ICON_BATTERY,
     ICON_TIMER,
-    ICON_POWER,
     DEVICE_CLASS_CURRENT,
     DEVICE_CLASS_BATTERY,
     DEVICE_CLASS_TEMPERATURE,
-    DEVICE_CLASS_SWITCH,
     DEVICE_CLASS_POWER,
     DEVICE_CLASS_ENERGY,
     DEVICE_CLASS_DURATION,
-    DEVICE_CLASS_BATTERY_CHARGING,
 )
 
 UNIT_AMPER_HOURS = 'Ah'
 DEPENDENCIES = ["uart"]
 AUTO_LOAD = ["sensor"]
 
-# sensors
-CONF_CURRENT_DIRECTION="current_direction"
-CONF_BATTERY_OHM="battery_ohm"
-CONF_BATTERY_CHARGED_ENERGY = 'battery_charged_energy'
-CONF_BATTERY_DISCHARGED_ENERGY = 'battery_discharged_energy'
-CONF_BATTERY_LIFE = 'battery_life'
-CONF_BATTERY_POWER = 'battery_power'
+# Новые названия констант для соответствия логике
+CONF_ENERGY_TOTAL_DISCHARGED = "energy_total_discharged"
+CONF_ENERGY_TOTAL_CHARGED = "energy_total_charged"
+CONF_BATTERY_CHARGED_POWER = 'battery_charged_power'
+CONF_BATTERY_DISCHARGED_POWER = 'battery_discharged_power'
+
 CONF_AMP_HOUR_REMAIN = "amp_hour_remain"
-CONF_AMP_HOUR_USED = "amp_hour_used_total"
-CONF_AMP_HOUR_CHARGED = "amp_hour_charged_total"
+CONF_BATTERY_LIFE = 'battery_life'
 CONF_OUTPUT_STATUS = "output_status"
 CONF_POWER = "power"
+CONF_CURRENT_DIRECTION = "current_direction"
 
-TYPES = [
-    CONF_VOLTAGE,
-    CONF_CURRENT,
-    CONF_BATTERY_LEVEL,
-    CONF_TEMPERATURE,
-    CONF_DIRECTION,
-    CONF_BATTERY_POWER,
-    CONF_BATTERY_LIFE,
-    CONF_BATTERY_CHARGED_ENERGY,
-    CONF_BATTERY_DISCHARGED_ENERGY,
-    CONF_AMP_HOUR_REMAIN,
-    CONF_AMP_HOUR_USED,
-    CONF_AMP_HOUR_CHARGED,
-    CONF_BATTERY_OHM,
-    CONF_OUTPUT_STATUS,
-    CONF_POWER
-]
+TYPES = {
+    CONF_VOLTAGE: "set_voltage_sensor",
+    CONF_CURRENT: "set_current_sensor",
+    CONF_BATTERY_LEVEL: "set_battery_level_sensor",
+    CONF_TEMPERATURE: "set_temperature_sensor",
+    CONF_DIRECTION: "set_current_direction_sensor",
+    CONF_POWER: "set_power_sensor",
+    CONF_BATTERY_LIFE: "set_battery_life_sensor",
+    CONF_OUTPUT_STATUS: "set_output_status_sensor",
+    CONF_AMP_HOUR_REMAIN: "set_amp_hour_remain_sensor",
+    # Переименованные связки с C++
+    CONF_ENERGY_TOTAL_DISCHARGED: "set_energy_total_discharged_sensor",
+    CONF_ENERGY_TOTAL_CHARGED: "set_energy_total_charged_sensor",
+    CONF_BATTERY_CHARGED_POWER: "set_battery_charged_power_sensor",
+    CONF_BATTERY_DISCHARGED_POWER: "set_battery_discharged_power_sensor",
+}
 
-CONF_INVERT_CURRENT="invert_current"
-CONF_UPDATE_SETTINGS_INTERVAL="update_settings_interval"
-CONF_UPDATE_STATS_INTERVAL="update_stats_interval"
+CONF_INVERT_CURRENT = "invert_current"
+CONF_UPDATE_SETTINGS_INTERVAL = "update_settings_interval"
+CONF_UPDATE_STATS_INTERVAL = "update_stats_interval"
 
-JuncTekKGF = cg.global_ns.class_(
-    "JuncTekKGF", cg.Component, uart.UARTDevice
-)
+JuncTekKGF = cg.global_ns.class_("JuncTekKGF", cg.Component, uart.UARTDevice)
 
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
@@ -111,14 +93,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_BATTERY_LEVEL): sensor.sensor_schema(
                 unit_of_measurement=UNIT_PERCENT,
                 icon=ICON_PERCENT,
-                accuracy_decimals=2,
-                device_class=DEVICE_CLASS_BATTERY,
-                state_class=STATE_CLASS_MEASUREMENT,
-            ),
-            cv.Optional(CONF_BATTERY_OHM): sensor.sensor_schema(
-                unit_of_measurement=UNIT_OHM,
-                icon="mdi:resistor",
-                accuracy_decimals=3,
+                accuracy_decimals=1,
                 device_class=DEVICE_CLASS_BATTERY,
                 state_class=STATE_CLASS_MEASUREMENT,
             ),
@@ -131,6 +106,7 @@ CONFIG_SCHEMA = cv.All(
             ),
             cv.Optional(CONF_DIRECTION): sensor.sensor_schema(
                 accuracy_decimals=0,
+                icon="mdi:directions"
             ),
             cv.Optional(CONF_OUTPUT_STATUS): sensor.sensor_schema(
                 accuracy_decimals=0,
@@ -138,7 +114,7 @@ CONFIG_SCHEMA = cv.All(
             ),
             cv.Optional(CONF_POWER): sensor.sensor_schema(
                 unit_of_measurement=UNIT_WATT,
-                icon=ICON_POWER,
+                icon="mdi:flash",
                 accuracy_decimals=2,
                 device_class=DEVICE_CLASS_POWER,
                 state_class=STATE_CLASS_MEASUREMENT,
@@ -150,16 +126,17 @@ CONFIG_SCHEMA = cv.All(
                 device_class=DEVICE_CLASS_DURATION,
                 state_class=STATE_CLASS_MEASUREMENT,
              ),
-            cv.Optional(CONF_BATTERY_CHARGED_ENERGY): sensor.sensor_schema(
+            # Мгновенная мощность заряда/разряда
+            cv.Optional(CONF_BATTERY_CHARGED_POWER): sensor.sensor_schema(
                 unit_of_measurement=UNIT_WATT,
-                icon="mdi:lightning-bolt",
+                icon="mdi:battery-arrow-up",
                 accuracy_decimals=2,
                 device_class=DEVICE_CLASS_POWER,
                 state_class=STATE_CLASS_MEASUREMENT,
             ),
-            cv.Optional(CONF_BATTERY_DISCHARGED_ENERGY): sensor.sensor_schema(
+            cv.Optional(CONF_BATTERY_DISCHARGED_POWER): sensor.sensor_schema(
                 unit_of_measurement=UNIT_WATT,
-                icon="mdi:lightning-bolt",
+                icon="mdi:battery-arrow-down",
                 accuracy_decimals=2,
                 device_class=DEVICE_CLASS_POWER,
                 state_class=STATE_CLASS_MEASUREMENT,
@@ -168,46 +145,40 @@ CONFIG_SCHEMA = cv.All(
                 unit_of_measurement=UNIT_AMPER_HOURS,
                 icon=ICON_BATTERY,
                 accuracy_decimals=1,
-                device_class=DEVICE_CLASS_BATTERY,
                 state_class=STATE_CLASS_MEASUREMENT,
             ),
-
-            cv.Optional(CONF_AMP_HOUR_USED): sensor.sensor_schema(
+            # Накопленная энергия в кВт*ч
+            cv.Optional(CONF_ENERGY_TOTAL_DISCHARGED): sensor.sensor_schema(
                 unit_of_measurement=UNIT_KILOWATT_HOURS,
                 icon="mdi:lightning-bolt",
-                accuracy_decimals=1,
-                device_class=DEVICE_CLASS_BATTERY,
-                state_class=STATE_CLASS_MEASUREMENT,
+                accuracy_decimals=3,
+                device_class=DEVICE_CLASS_ENERGY,
+                state_class=STATE_CLASS_TOTAL_INCREASING,
             ),
-            cv.Optional(CONF_AMP_HOUR_CHARGED): sensor.sensor_schema(
+            cv.Optional(CONF_ENERGY_TOTAL_CHARGED): sensor.sensor_schema(
                 unit_of_measurement=UNIT_KILOWATT_HOURS,
-                icon="mdi:lightning-bolt",
-                accuracy_decimals=1,
-                device_class=DEVICE_CLASS_BATTERY,
-                state_class=STATE_CLASS_MEASUREMENT,
+                icon="mdi:lightning-bolt-outline",
+                accuracy_decimals=3,
+                device_class=DEVICE_CLASS_ENERGY,
+                state_class=STATE_CLASS_TOTAL_INCREASING,
             ),
 
             cv.Optional(CONF_INVERT_CURRENT, default=False): cv.boolean,
             cv.Optional(CONF_UPDATE_SETTINGS_INTERVAL, default=30000): cv.int_,
             cv.Optional(CONF_UPDATE_STATS_INTERVAL, default=1000): cv.int_,
-            cv.Optional(CONF_CURRENT_DIRECTION, default=True): cv.boolean,
         }
     ).extend(uart.UART_DEVICE_SCHEMA)
-    )
-
-async def setup_conf(config, key, hub):
-    if key in config:
-        conf = config[key]
-        sens = await sensor.new_sensor(conf)
-        cg.add(getattr(hub, f"set_{key}_sensor")(sens))
-
+)
 
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID], config[CONF_ADDRESS], config[CONF_INVERT_CURRENT])
     await cg.register_component(var, config)
     await uart.register_uart_device(var, config)
-    for key in TYPES:
-        await setup_conf(config, key, var)
+    
+    for key, method_name in TYPES.items():
+        if key in config:
+            sens = await sensor.new_sensor(config[key])
+            cg.add(getattr(var, method_name)(sens))
 
     cg.add(var.set_update_settings_interval(config[CONF_UPDATE_SETTINGS_INTERVAL]))
     cg.add(var.set_update_stats_interval(config[CONF_UPDATE_STATS_INTERVAL]))
