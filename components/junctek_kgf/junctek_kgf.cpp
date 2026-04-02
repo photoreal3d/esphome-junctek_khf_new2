@@ -4,6 +4,7 @@
 #include <string>
 #include <string.h>
 #include <setjmp.h>
+#include <cmath>
 
 static jmp_buf parsing_failed;
 static const char *const TAG = "JunkTek KG-F";
@@ -20,14 +21,12 @@ esphome::optional<int> try_getval(const char*& cursor)
   }
   if (*end != ',' && *end != '.')
   {
-    ESP_LOGE("JunkTekKGF", "Error no coma %s", cursor);
     return nullopt;
   }
-  cursor = end + 1; // Skip coma
-  return val;
+  cursor = end + 1; // Пропускаем запятую или точку
+  return (int)val;
 }
 
-// Get a value where it's expected to be "<number>[,.], incrementing the cursor past the end"
 int getval(const char*& cursor)
 {
   auto val = try_getval(cursor);
@@ -37,14 +36,11 @@ int getval(const char*& cursor)
   }
   return *val;
 }
-  
 
 JuncTekKGF::JuncTekKGF(unsigned address, bool invert_current)
   : address_(address)
   , invert_current_(invert_current)
 {
-
-  
 }
 
 void JuncTekKGF::dump_config()
@@ -52,13 +48,10 @@ void JuncTekKGF::dump_config()
   ESP_LOGCONFIG(TAG, "junctek_kgf:");
   ESP_LOGCONFIG(TAG, "  Address: %d", this->address_);
   ESP_LOGCONFIG(TAG, "  Invert Current: %s", this->invert_current_ ? "True" : "False");
-  ESP_LOGCONFIG(TAG, "  Update Settings Interval: %d", this->update_settings_interval_);
-  ESP_LOGCONFIG(TAG, "  Update Stats Interval: %d", this->update_stats_interval_);
 }
 
 void JuncTekKGF::handle_settings(const char* buffer)
 {
-  ESP_LOGD("JunkTekKGF", "Settings %s", buffer);
   const char* cursor = buffer;
   const int address = getval(cursor);
 
@@ -66,196 +59,134 @@ void JuncTekKGF::handle_settings(const char* buffer)
     return;
 
   const int checksum = getval(cursor);
-  
   if (! verify_checksum(checksum, cursor))
     return;
 
-  const float overVoltage = getval(cursor) / 100.0;
-  const float underVoltage = getval(cursor) / 100.0;
-  const float positiveOverCurrent = getval(cursor) / 1000.0;
-  const float negativeOverCurrent = getval(cursor) / 100.00;
-  const float overPowerProtection = getval(cursor) / 100.00;
-  const float overTemperature = getval(cursor) - 100.0;
-  const int protectionRecoverySeconds = getval(cursor);
-  const int delayTime = getval(cursor);
-  const float batteryAmpHourCapacity = getval(cursor) / 10.0;
-  const int voltageCalibration = getval(cursor);
-  const int currentCalibration = getval(cursor);
-  const float temperatureCalibration = getval(cursor) - 100.0;
-  const int reserved = getval(cursor);
-  const int relayNormallyOpen = getval(cursor);
-  const int currentratio = getval(cursor);
+  // Пропускаем ненужные настройки до емкости батареи
+  for(int i=0; i<8; i++) getval(cursor); 
 
-  // Save the capacity for calculating the %
+  const float batteryAmpHourCapacity = getval(cursor) / 10.0;
+  
   this->battery_capacity_ = batteryAmpHourCapacity;
   this->last_settings_ = esphome::millis();
-  this->last_stats_  = this->last_settings_;
 }
 
 void JuncTekKGF::handle_status(const char* buffer)
 {
-  ESP_LOGV("JunkTekKGF", "Status %s", buffer);
+  ESP_LOGV(TAG, "Status: %s", buffer);
   const char* cursor = buffer;
-  const int address = getval(cursor); //0
-  if (address != this->address_)
-    return;
+  
+  const int address = getval(cursor); // 1. Адрес
+  if (address != this->address_) return;
  
-  const int checksum = getval(cursor); //1
-  if (! verify_checksum(checksum, cursor))
-    return;
+  const int checksum = getval(cursor); // 2. Чексумма
+  if (! verify_checksum(checksum, cursor)) return;
 
-  const float voltage = getval(cursor) / 100.00; //2
-  const float amps = getval(cursor) / 100.00; //3
+  const float voltage = getval(cursor) / 100.00;        // 3. Напряжение (В)
+  const float amps = getval(cursor) / 100.00;           // 4. Ток (А)
+  const float ampHourRemaining = getval(cursor) / 1000.0; // 5. Остаток емкости (А*ч)
+  const float energyDischarged = getval(cursor) / 1000.0; // 6. Энергия разряда (кВт*ч)
+  const float energyCharged = getval(cursor) / 1000.0;    // 7. Энергия заряда (кВт*ч)
+  
+  getval(cursor); // 8. operational record value (пропускаем)
+  
+  const float temperature = getval(cursor) - 100.0;     // 9. Температура (°C)
+  
+  getval(cursor); // 10. reserved (пропускаем)
+  
+  const int outputStatus = getval(cursor);              // 11. Код статуса
+  const int direction = getval(cursor);                 // 12. Направление (0-разряд, 1-заряд)
+  const int batteryLifeMinutes = getval(cursor);        // 13. Оставшееся время (мин)
+  
+  getval(cursor); // 14. time adjustment (пропускаем)
 
-  const float ampHourRemaining = getval(cursor) / 1000.0; //4
-  const float ampHourTotalUsed = getval(cursor) / 1000.0; //5
-  const float ampHourTotalCharged = getval(cursor) / 1000.0; //6
+  // --- ПУБЛИКАЦИЯ ДАННЫХ ---
 
-  const float runtimeSeconds = getval(cursor); //7
-  const float temperature = getval(cursor) - 100.0; //8
-  const float powerInWatts = getval(cursor) / 100.00; //9
-  const int outputStatus = getval(cursor); //10
-  const int direction = getval(cursor); //11
-  const int batteryLifeMinutes = getval(cursor); //12
-  const float batteryInternalOhms = getval(cursor) / 100000.000; //13, Ohms
-
-  if (voltage_sensor_)
+  if (voltage_sensor_) 
     this->voltage_sensor_->publish_state(voltage);
 
-  if (battery_level_sensor_ && this->battery_capacity_)
-  {
-    float battLvl = ampHourRemaining * 100.0 / * this->battery_capacity_;
-
-    //prevent from publishing crazy numbers.
-    if(battLvl < 100 && battLvl > 0)
+  if (battery_level_sensor_ && this->battery_capacity_) {
+    float battLvl = ampHourRemaining * 100.0 / *this->battery_capacity_;
+    if(battLvl <= 100 && battLvl >= 0)
       this->battery_level_sensor_->publish_state(battLvl);
   }
 
-  if (current_sensor_) {
-    float adjustedCurrent = direction == 0 ? amps : -amps;
-    if (invert_current_)
-      adjustedCurrent *= -1;
-    current_sensor_->publish_state(adjustedCurrent);
-  }
+  // Расчет тока с учетом знака
+  float adjustedCurrent = (direction == 0) ? amps : -amps;
+  if (invert_current_) adjustedCurrent *= -1;
+
+  if (current_sensor_) 
+    this->current_sensor_->publish_state(adjustedCurrent);
 
   if (current_direction_sensor_)
     this->current_direction_sensor_->publish_state(direction == 0);
 
-  if (battery_ohm_sensor_)
-    this->battery_ohm_sensor_->publish_state(batteryInternalOhms);
+  if (energy_total_discharged_sensor_)
+    this->energy_total_discharged_sensor_->publish_state(energyDischarged);
+
+  if (energy_total_charged_sensor_)
+    this->energy_total_charged_sensor_->publish_state(energyCharged);
 
   if (amp_hour_remain_sensor_)
     this->amp_hour_remain_sensor_->publish_state(ampHourRemaining);
 
-  if (amp_hour_used_sensor_)
-  this->amp_hour_used_sensor_->publish_state(ampHourTotalUsed);
-
-  if (amp_hour_charged_sensor_)
-  this->amp_hour_charged_sensor_->publish_state(ampHourTotalCharged);
+  if (temperature_)
+    this->temperature_->publish_state(temperature);
 
   if (output_status_sensor_)
     this->output_status_sensor_->publish_state(outputStatus);
 
-  if (temperature_)
-    this->temperature_->publish_state(temperature);
-
-  if (power_sensor_) {
-    float adjustedCurrent = direction == 0 ? amps : -amps;
-    if (invert_current_)
-      adjustedCurrent *= -1;
-    float watts = voltage * adjustedCurrent;
-    this->power_sensor_->publish_state(watts);
-  }
-
-  if (battery_charged_energy_sensor_) {
-
-    float adjustedCurrent = direction == 0 ? amps : -amps;
-    if (invert_current_)
-      adjustedCurrent *= -1;
-    float watts = voltage * adjustedCurrent;
-
-    //we only care about amps that came into battery
-    if(direction == 1)
-      this->battery_charged_energy_sensor_->publish_state(watts);
-    else
-      this->battery_charged_energy_sensor_->publish_state(0);
-  }
-
-
-  if (battery_discharged_energy_sensor_) {
-
-    float adjustedCurrent = direction == 1 ? amps : -amps;
-    if (invert_current_)
-      adjustedCurrent *= -1;
-    float watts = voltage * adjustedCurrent;
-
-    //we only care about amps that came from battery
-    if(direction == 0)
-      this->battery_discharged_energy_sensor_->publish_state(watts);
-    else
-      this->battery_discharged_energy_sensor_->publish_state(0);
-  }
-
   if (battery_life_sensor_)
-      this->battery_life_sensor_->publish_state(batteryLifeMinutes);
+    this->battery_life_sensor_->publish_state(batteryLifeMinutes);
 
-  if (runtime_sensor_)
-    this->runtime_sensor_->publish_state(runtimeSeconds);
+  // Мощность (P = U * I)
+  float watts = voltage * adjustedCurrent;
+  if (power_sensor_) 
+    this->power_sensor_->publish_state(watts);
+
+  // Разделение мощности на заряд/разряд (Вт)
+  if (battery_charged_power_sensor_)
+    this->battery_charged_power_sensor_->publish_state((direction == 1) ? std::abs(watts) : 0.0f);
+
+  if (battery_discharged_power_sensor_)
+    this->battery_discharged_power_sensor_->publish_state((direction == 0) ? std::abs(watts) : 0.0f);
 
   this->last_stats_ = esphome::millis();
 }
 
 void JuncTekKGF::handle_line()
 {
-  //A failure in parsing will return back to here with a non-zero value
   if (setjmp(parsing_failed)){
-    ESP_LOGE("JunkTekKGF", "parsing_failed");
+    ESP_LOGE(TAG, "Parsing failed for line: %s", this->line_buffer_);
     return;
   }
 
   const char* buffer = &this->line_buffer_[0];
-
-  if (buffer[0] != ':' || buffer[1] != 'r') {
-    return;
-  }
+  if (buffer[0] != ':' || buffer[1] != 'r') return;
 
   if (strncmp(&buffer[2], "50=", 3) == 0)
     handle_status(&buffer[5]);
   else if (strncmp(&buffer[2], "51=", 3) == 0)
     handle_settings(&buffer[5]);
-  else
-    ESP_LOGD("JunkTekKGF", "buffer:", buffer);
-
-  return;
 }
 
 bool JuncTekKGF::verify_checksum(int checksum, const char* buffer)
 {
   long total = 0;
-  while (auto val = try_getval(buffer))
+  const char* temp_cursor = buffer;
+  while (auto val = try_getval(temp_cursor))
   {
     total += *val;
   }
-  const bool checksum_valid = (total % 255) + 1 == checksum;
-  ESP_LOGD("JunkTekKGF", "Recv checksum %d total %ld valid %d", checksum, total, checksum_valid);
-  return checksum_valid;
+  return (total % 255) + 1 == checksum;
 }
 
 void JuncTekKGF::loop()
 {
-  // Читаем UART постоянно, пока есть данные в буфере контроллера
   while (available()) {
     if (this->readline()) {
       this->handle_line();
     }
-  }
-
-  // Опционально: если датчик "молчит" долгое время, можно 
-  // принудительно запросить данные (но KG-F обычно шлет сам)
-  const unsigned long now = esphome::millis();
-  if (this->update_stats_interval_ > 0 && 
-     (!this->last_stats_ || (now - *this->last_stats_ > this->update_stats_interval_))) {
-       // Здесь можно добавить код запроса, если потребуется
   }
 }
 
@@ -264,21 +195,17 @@ bool JuncTekKGF::readline()
   while (available()) {
     const char readch = read();
     if (readch > 0) {
-      switch (readch) {
-        case '\r': // Игнорируем возврат каретки
-          break;
-        case '\n': // Конец строки найден
-          this->line_buffer_[this->line_pos_] = 0; // Завершаем строку
-          this->line_pos_ = 0; // Сбрасываем индекс для следующего раза
-          return true;
-        default:
-          if (this->line_pos_ < MAX_LINE_LEN - 1) {
-            this->line_buffer_[this->line_pos_++] = readch;
-            this->line_buffer_[this->line_pos_] = 0;
-          } else {
-            // Если буфер переполнен без символа новой строки, сбрасываем его
-            this->line_pos_ = 0;
-          }
+      if (readch == '\n') {
+        this->line_buffer_[this->line_pos_] = 0;
+        this->line_pos_ = 0;
+        return true;
+      } else if (readch != '\r') {
+        if (this->line_pos_ < MAX_LINE_LEN - 1) {
+          this->line_buffer_[this->line_pos_++] = readch;
+          this->line_buffer_[this->line_pos_] = 0;
+        } else {
+          this->line_pos_ = 0;
+        }
       }
     }
   }
