@@ -82,21 +82,33 @@ void JuncTekKGF::handle_status(const char* buffer)
   const int checksum = getval(cursor); // 2. Чексумма
   if (! verify_checksum(checksum, cursor)) return;
 
-  const float voltage = getval(cursor) / 100.00;        // 3. Напряжение (В)
-  const float amps = getval(cursor) / 100.00;           // 4. Ток (А)
+  const float voltage = getval(cursor) / 100.00; // 3. Напряжение (В)
+  if (voltage < 0.1) {
+    ESP_LOGW(TAG, "Ignore packet: Voltage is 0 (parsing sync error)");
+    return;
+  }
+  
+  const float amps = getval(cursor) / 100.00; // 4. Ток (А)
   const float ampHourRemaining = getval(cursor) / 1000.0; // 5. Остаток емкости (А*ч)
-  const float energyDischarged = getval(cursor) / 1000.0; // 6. Энергия разряда (кВт*ч)
-  const float energyCharged = getval(cursor) / 1000.0;    // 7. Энергия заряда (кВт*ч)
+  const float energyDischarged = getval(cursor) / 100000.0; // 6. Энергия разряда (кВт*ч)
+  const float energyCharged = getval(cursor) / 100000.0; // 7. Энергия заряда (кВт*ч)
   
   getval(cursor); // 8. operational record value (пропускаем)
   
-  const float temperature = getval(cursor) - 100.0;     // 9. Температура (°C)
+  const float temperature = getval(cursor) - 100.0; // 9. Температура (°C)
   
   getval(cursor); // 10. reserved (пропускаем)
   
-  const int outputStatus = getval(cursor);              // 11. Код статуса
-  const int direction = getval(cursor);                 // 12. Направление (0-разряд, 1-заряд)
-  const int batteryLifeMinutes = getval(cursor);        // 13. Оставшееся время (мин)
+  const int outputStatus = getval(cursor); // 11. Код статуса
+  if (outputStatus != 99) {
+    ESP_LOGW(TAG, "Junctek abnormal status: %d. Sensors update skipped.", outputStatus);
+    // Обновляем только сенсор статуса, чтобы видеть ошибку в HA
+    if (output_status_sensor_) this->output_status_sensor_->publish_state(outputStatus);
+    return; 
+  }
+  
+  const int direction = getval(cursor); // 12. Направление (0-разряд, 1-заряд)
+  const int batteryLifeMinutes = getval(cursor); // 13. Оставшееся время (мин)
   
   getval(cursor); // 14. time adjustment (пропускаем)
 
@@ -107,7 +119,7 @@ void JuncTekKGF::handle_status(const char* buffer)
 
   if (battery_level_sensor_ && this->battery_capacity_) {
     float battLvl = ampHourRemaining * 100.0 / *this->battery_capacity_;
-    if(battLvl <= 100 && battLvl >= 0)
+    if(battLvl <= 100 && battLvl > 0)
       this->battery_level_sensor_->publish_state(battLvl);
   }
 
@@ -156,18 +168,32 @@ void JuncTekKGF::handle_status(const char* buffer)
 
 void JuncTekKGF::handle_line()
 {
-  if (setjmp(parsing_failed)){
-    ESP_LOGE(TAG, "Parsing failed for line: %s", this->line_buffer_);
+  std::string line(this->line_buffer_);
+  
+  // Ищем статус :R50= или :r50=
+  size_t p50 = line.find(":R50=");
+  if (p50 == std::string::npos) p50 = line.find(":r50=");
+  
+  if (p50 != std::string::npos) {
+    if (setjmp(parsing_failed)) {
+      ESP_LOGE(TAG, "Parsing failed for R50: %s", this->line_buffer_);
+      return;
+    }
+    handle_status(&this->line_buffer_[p50 + 5]);
     return;
   }
 
-  const char* buffer = &this->line_buffer_[0];
-  if (buffer[0] != ':' || buffer[1] != 'r') return;
+  // Ищем настройки :R51= или :r51=
+  size_t p51 = line.find(":R51=");
+  if (p51 == std::string::npos) p51 = line.find(":r51=");
 
-  if (strncmp(&buffer[2], "50=", 3) == 0)
-    handle_status(&buffer[5]);
-  else if (strncmp(&buffer[2], "51=", 3) == 0)
-    handle_settings(&buffer[5]);
+  if (p51 != std::string::npos) {
+    if (setjmp(parsing_failed)) {
+      ESP_LOGE(TAG, "Parsing failed for R51: %s", this->line_buffer_);
+      return;
+    }
+    handle_settings(&this->line_buffer_[p51 + 5]);
+  }
 }
 
 bool JuncTekKGF::verify_checksum(int checksum, const char* buffer)
@@ -184,8 +210,16 @@ bool JuncTekKGF::verify_checksum(int checksum, const char* buffer)
 void JuncTekKGF::loop()
 {
   while (available()) {
-    if (this->readline()) {
+    const char readch = read();
+    if (readch == ':') this->line_pos_ = 0; // Новая строка всегда сбрасывает буфер
+    
+    if (readch == '\n') {
+      this->line_buffer_[this->line_pos_] = 0;
       this->handle_line();
+      this->line_pos_ = 0;
+    } else if (readch != '\r' && this->line_pos_ < MAX_LINE_LEN - 1) {
+      this->line_buffer_[this->line_pos_++] = readch;
+      this->line_buffer_[this->line_pos_] = 0;
     }
   }
 }
