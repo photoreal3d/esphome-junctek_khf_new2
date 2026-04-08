@@ -163,32 +163,18 @@ void JuncTekKGF::handle_status(const char* buffer)
 
 void JuncTekKGF::handle_line()
 {
-  std::string line(this->line_buffer_);
-  
-  // Ищем статус :R50= или :r50=
-  size_t p50 = line.find(":R50=");
-  if (p50 == std::string::npos) p50 = line.find(":r50=");
-  
-  if (p50 != std::string::npos) {
-    if (setjmp(parsing_failed)) {
-      ESP_LOGE(TAG, "Parsing failed for R50: %s", this->line_buffer_);
-      return;
-    }
-    handle_status(&this->line_buffer_[p50 + 5]);
+  if (setjmp(parsing_failed)){
+    ESP_LOGE(TAG, "Parsing failed for line: %s", this->line_buffer_);
     return;
   }
 
-  // Ищем настройки :R51= или :r51=
-  size_t p51 = line.find(":R51=");
-  if (p51 == std::string::npos) p51 = line.find(":r51=");
+  const char* buffer = &this->line_buffer_[0];
+  if (buffer[0] != ':' || buffer[1] != 'r') return;
 
-  if (p51 != std::string::npos) {
-    if (setjmp(parsing_failed)) {
-      ESP_LOGE(TAG, "Parsing failed for R51: %s", this->line_buffer_);
-      return;
-    }
-    handle_settings(&this->line_buffer_[p51 + 5]);
-  }
+  if (strncmp(&buffer[2], "50=", 3) == 0)
+    handle_status(&buffer[5]);
+  else if (strncmp(&buffer[2], "51=", 3) == 0)
+    handle_settings(&buffer[5]);
 }
 
 bool JuncTekKGF::verify_checksum(int checksum, const char* buffer)
@@ -205,16 +191,8 @@ bool JuncTekKGF::verify_checksum(int checksum, const char* buffer)
 void JuncTekKGF::loop()
 {
   while (available()) {
-    const char readch = read();
-    if (readch == ':') this->line_pos_ = 0; // Новая строка всегда сбрасывает буфер
-    
-    if (readch == '\n') {
-      this->line_buffer_[this->line_pos_] = 0;
+    if (this->readline()) {
       this->handle_line();
-      this->line_pos_ = 0;
-    } else if (readch != '\r' && this->line_pos_ < MAX_LINE_LEN - 1) {
-      this->line_buffer_[this->line_pos_++] = readch;
-      this->line_buffer_[this->line_pos_] = 0;
     }
   }
 }
