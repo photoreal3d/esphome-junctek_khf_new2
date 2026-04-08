@@ -83,11 +83,6 @@ void JuncTekKGF::handle_status(const char* buffer)
   if (! verify_checksum(checksum, cursor)) return;
 
   const float voltage = getval(cursor) / 100.00; // 3. Напряжение (В)
-  if (voltage < 0.1) {
-    ESP_LOGW(TAG, "Ignore packet: Voltage is 0 (parsing sync error)");
-    return;
-  }
-  
   const float amps = getval(cursor) / 100.00; // 4. Ток (А)
   const float ampHourRemaining = getval(cursor) / 1000.0; // 5. Остаток емкости (А*ч)
   const float energyDischarged = getval(cursor) / 100000.0; // 6. Энергия разряда (кВт*ч)
